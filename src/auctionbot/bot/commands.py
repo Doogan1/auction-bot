@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING
 import discord
 from discord import app_commands
 
-from auctionbot.bot.actions import NO_MENTIONS, NOT_FOUND_MESSAGE, get_in_guild, perform_bid
+from auctionbot.bot.actions import (
+    NO_MENTIONS,
+    NOT_FOUND_MESSAGE,
+    discard_auction,
+    get_in_guild,
+    perform_bid,
+)
 from auctionbot.bot.parsing import parse_amount, parse_duration
 from auctionbot.bot.simulate import start_simulation
 from auctionbot.bot.views import auction_view
@@ -83,11 +89,15 @@ def register(bot: "AuctionBot") -> None:
         except ValueError as err:
             await interaction.response.send_message(str(err), ephemeral=True)
             return
-        await interaction.response.send_message(
-            embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=NO_MENTIONS
-        )
-        message = await interaction.original_response()
-        await service.set_message_id(auction.id, message.id)
+        try:
+            await interaction.response.send_message(
+                embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=NO_MENTIONS
+            )
+            message = await interaction.original_response()
+            await service.set_message_id(auction.id, message.id)
+        except Exception:
+            await discard_auction(service, auction)  # no message exists, so don't leave it live
+            raise
 
     @group.command(name="status", description="Show an auction (default: the newest open one)")
     @app_commands.describe(auction="Which auction")

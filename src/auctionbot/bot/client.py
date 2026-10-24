@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import discord
@@ -7,6 +6,7 @@ from discord.ext import tasks
 
 from auctionbot.bot import commands
 from auctionbot.bot.actions import reply_ephemeral
+from auctionbot.bot.errors import is_permanent
 from auctionbot.bot.refresher import MessageRefresher
 from auctionbot.bot.render import (
     auction_embed,
@@ -14,6 +14,7 @@ from auctionbot.bot.render import (
     closed_announcement,
 )
 from auctionbot.bot.scheduler import Unannounceable, tick
+from auctionbot.bot.simulate import SimulationRegistry
 from auctionbot.bot.views import BidButton, CustomBidButton, auction_view
 from auctionbot.clock import SystemClock
 from auctionbot.config import Settings
@@ -43,37 +44,45 @@ class DiscordAnnouncer:
         )
         none = discord.AllowedMentions.none()
         channel = self._bot.get_partial_messageable(ref.channel_id)
+        reference = None
+        if ref.message_id is not None:
+            message = channel.get_partial_message(ref.message_id)
+            try:
+                await message.edit(
+                    embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=none
+                )
+                reference = message.to_reference(fail_if_not_exists=False)
+            except discord.HTTPException as err:
+                if not is_permanent(err):
+                    raise
+                # The message was deleted or can't be edited; still announce the result.
+                log.warning("Could not edit message for auction %d: %s", auction.id, err)
         try:
-            reference = None
-            if ref.message_id is not None:
-                message = channel.get_partial_message(ref.message_id)
-                try:
-                    await message.edit(
-                        embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=none
-                    )
-                    reference = message.to_reference(fail_if_not_exists=False)
-                except discord.NotFound:
-                    pass  # the auction message was deleted; still announce the result
             await channel.send(text, reference=reference, allowed_mentions=none)
-        except (discord.NotFound, discord.Forbidden) as err:
-            raise Unannounceable(f"{type(err).__name__}: {err}") from err
+        except discord.HTTPException as err:
+            if is_permanent(err):
+                raise Unannounceable(f"{type(err).__name__}: {err}") from err
+            raise
 
 
 class AuctionBot(discord.Client):
     def __init__(self, settings: Settings, service: AuctionService) -> None:
-        super().__init__(intents=build_intents())
+        super().__init__(
+            intents=build_intents(), allowed_mentions=discord.AllowedMentions.none()
+        )
         self.settings = settings
         self.service = service
         self.tree = app_commands.CommandTree(self)
         self.tree.error(self._on_tree_error)
         self.refresher = MessageRefresher(self.refresh_message, SystemClock())
         self.announcer = DiscordAnnouncer(self)
-        self.simulations: dict[int, asyncio.Task] = {}  # guild id -> running /simulate task
+        self.simulations = SimulationRegistry()  # at most one /simulate per guild
+        self.announce_failures: dict[int, int] = {}
 
     @tasks.loop(seconds=2)
     async def scheduler(self) -> None:
         try:
-            await tick(self.service, self.announcer)
+            await tick(self.service, self.announcer, self.announce_failures)
         except Exception:
             log.exception("Scheduler tick failed")  # keep the loop alive
 
@@ -107,8 +116,7 @@ class AuctionBot(discord.Client):
         )
 
     async def close(self) -> None:
-        for task in list(self.simulations.values()):
-            task.cancel()
+        await self.simulations.cancel_all()
         self.scheduler.cancel()
         await self.refresher.aclose()
         await super().close()

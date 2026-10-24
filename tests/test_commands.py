@@ -1,3 +1,6 @@
+import types
+
+import discord
 import pytest
 
 from auctionbot.bot.actions import get_in_guild
@@ -63,3 +66,32 @@ async def test_get_in_guild_rejects_auctions_from_other_guilds():
             await get_in_guild(service, 999, 1)
     finally:
         await repo.close()
+
+
+class FailingResponse:
+    async def send_message(self, *args, **kwargs):
+        raise RuntimeError("discord is down")
+
+
+async def test_start_failure_after_create_cancels_the_orphan_auction():
+    repo = await Repository.open(":memory:")
+    try:
+        service = AuctionService(repo, FakeClock(1000.0))
+        bot = AuctionBot(Settings("token", None, ":memory:"), service)
+        register(bot)
+        start = bot.tree.get_command("auction").get_command("start")
+        interaction = types.SimpleNamespace(
+            guild_id=1, channel_id=10, user=types.SimpleNamespace(id=100), response=FailingResponse()
+        )
+        with pytest.raises(RuntimeError):
+            await start.callback(interaction, title="Lamp", starting_bid=10, duration="5m")
+        assert await service.list_open(1) == []
+    finally:
+        await repo.close()
+
+
+def test_client_suppresses_mentions_by_default():
+    bot = AuctionBot(Settings("token", None, ":memory:"), service=None)
+    assert bot.allowed_mentions.everyone is False
+    assert bot.allowed_mentions.users is False
+    assert bot.allowed_mentions.roles is False

@@ -1,9 +1,13 @@
+import logging
+
 import discord
 
 from auctionbot.bot.render import bid_announcement, reject_message
 from auctionbot.core.models import Auction
 from auctionbot.core.results import BidRejected
 from auctionbot.service import AuctionNotFound, AuctionService
+
+log = logging.getLogger(__name__)
 
 NO_MENTIONS = discord.AllowedMentions.none()
 NOT_FOUND_MESSAGE = "That auction doesn't exist (or it belongs to another server)."
@@ -47,3 +51,11 @@ async def perform_bid(interaction: discord.Interaction, auction_id: int, amount:
         allowed_mentions=NO_MENTIONS,
     )
     bot.refresher.request(auction_id)
+
+
+async def discard_auction(service: AuctionService, auction: Auction) -> None:
+    """Cancel an auction whose Discord message could not be posted, so it is not left live."""
+    try:
+        await service.cancel(auction.id, auction.seller_id, False)
+    except Exception:
+        log.exception("Could not cancel orphaned auction %d", auction.id)
