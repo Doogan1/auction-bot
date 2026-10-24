@@ -1,7 +1,16 @@
 from dataclasses import replace
 
 from auctionbot.core.models import Auction, Bid, Status
-from auctionbot.core.results import BidAccepted, BidRejected, BidResult, RejectReason
+from auctionbot.core.results import (
+    BidAccepted,
+    BidRejected,
+    BidResult,
+    CancelRejected,
+    CancelRejectReason,
+    Cancelled,
+    CancelResult,
+    RejectReason,
+)
 
 # Bids above this are rejected so an amount can never overflow SQLite's 64-bit integers.
 MAX_AMOUNT = 10**12
@@ -51,3 +60,21 @@ def place_bid(
         extensions_used=extensions_used,
     )
     return new_auction, BidAccepted(extended=extended, new_ends_at=ends_at)
+
+
+def close_if_due(auction: Auction, now: float) -> tuple[Auction, bool]:
+    """Close an OPEN auction whose deadline has passed. True only on the OPEN -> CLOSED transition."""
+    if auction.status is Status.OPEN and now >= auction.ends_at:
+        return replace(auction, status=Status.CLOSED), True
+    return auction, False
+
+
+def cancel(
+    auction: Auction, actor_id: int, is_admin: bool, now: float
+) -> tuple[Auction, CancelResult]:
+    """Cancel an auction that is still open. Not-open is checked before permissions."""
+    if auction.status is not Status.OPEN or now >= auction.ends_at:
+        return auction, CancelRejected(CancelRejectReason.NOT_OPEN)
+    if actor_id != auction.seller_id and not is_admin:
+        return auction, CancelRejected(CancelRejectReason.NOT_ALLOWED)
+    return replace(auction, status=Status.CANCELLED), Cancelled()

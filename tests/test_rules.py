@@ -3,8 +3,15 @@ from dataclasses import replace
 import pytest
 
 from auctionbot.core.models import AuctionConfig, Bid, Status
-from auctionbot.core.results import BidAccepted, BidRejected, RejectReason
-from auctionbot.core.rules import MAX_AMOUNT, place_bid
+from auctionbot.core.results import (
+    BidAccepted,
+    BidRejected,
+    CancelRejected,
+    CancelRejectReason,
+    Cancelled,
+    RejectReason,
+)
+from auctionbot.core.rules import MAX_AMOUNT, cancel, close_if_due, place_bid
 from conftest import make_auction
 
 SELLER = 1
@@ -156,3 +163,82 @@ def test_rejected_bid_does_not_count_as_extension():
     auction = make_auction(bids=(Bid(ALICE, 10, 1.0),))
     new, _ = place_bid(auction, BOB, 11, 995.0)
     assert new == auction
+
+
+# --- close_if_due -----------------------------------------------------------
+
+
+def test_close_if_due_before_ends_at_does_nothing():
+    auction = make_auction()
+    new, closed = close_if_due(auction, 999.9)
+    assert closed is False and new == auction
+
+
+def test_close_if_due_at_ends_at_closes():
+    new, closed = close_if_due(make_auction(), 1000.0)
+    assert closed is True and new.status is Status.CLOSED
+
+
+def test_close_if_due_is_idempotent():
+    closed_auction, _ = close_if_due(make_auction(), 1000.0)
+    again, closed = close_if_due(closed_auction, 2000.0)
+    assert closed is False and again == closed_auction
+
+
+def test_close_if_due_ignores_cancelled():
+    auction = make_auction(status=Status.CANCELLED)
+    new, closed = close_if_due(auction, 2000.0)
+    assert closed is False and new == auction
+
+
+def test_close_with_bids_keeps_them_and_winner_is_max_bid():
+    auction = make_auction(bids=(Bid(ALICE, 10, 1.0), Bid(BOB, 15, 2.0)))
+    new, _ = close_if_due(auction, 1000.0)
+    assert new.bids == auction.bids
+    assert new.winning_bid() == Bid(BOB, 15, 2.0)
+
+
+def test_close_without_bids_has_no_winner():
+    new, closed = close_if_due(make_auction(), 1000.0)
+    assert closed is True and new.winning_bid() is None
+
+
+# --- cancel -----------------------------------------------------------------
+
+
+def test_seller_can_cancel_and_bids_are_kept():
+    auction = make_auction(bids=(Bid(ALICE, 10, 1.0),))
+    new, result = cancel(auction, SELLER, False, 10.0)
+    assert result == Cancelled()
+    assert new.status is Status.CANCELLED and new.bids == auction.bids
+
+
+def test_admin_non_seller_can_cancel():
+    new, result = cancel(make_auction(), 99, True, 10.0)
+    assert result == Cancelled() and new.status is Status.CANCELLED
+
+
+def test_other_user_cannot_cancel():
+    auction = make_auction()
+    new, result = cancel(auction, ALICE, False, 10.0)
+    assert result == CancelRejected(CancelRejectReason.NOT_ALLOWED)
+    assert new == auction
+
+
+def test_cancel_closed_auction_not_open_even_for_non_seller():
+    auction = make_auction(status=Status.CLOSED)
+    new, result = cancel(auction, ALICE, False, 10.0)
+    assert result == CancelRejected(CancelRejectReason.NOT_OPEN)
+    assert new == auction
+
+
+def test_cancel_open_but_past_deadline_is_not_open():
+    auction = make_auction()
+    new, result = cancel(auction, SELLER, False, 1000.0)
+    assert result == CancelRejected(CancelRejectReason.NOT_OPEN)
+    assert new == auction
+
+
+def test_bid_after_cancel_rejected_as_closed():
+    cancelled, _ = cancel(make_auction(), SELLER, False, 10.0)
+    assert_rejected(cancelled, ALICE, 10, 11.0, RejectReason.AUCTION_CLOSED)
