@@ -7,6 +7,7 @@ from discord import app_commands
 
 from auctionbot.bot.actions import NO_MENTIONS, NOT_FOUND_MESSAGE, get_in_guild, perform_bid
 from auctionbot.bot.parsing import parse_amount, parse_duration
+from auctionbot.bot.views import auction_view
 from auctionbot.bot.render import (
     auction_choice_label,
     auction_embed,
@@ -82,7 +83,7 @@ def register(bot: "AuctionBot") -> None:
             await interaction.response.send_message(str(err), ephemeral=True)
             return
         await interaction.response.send_message(
-            embed=auction_embed(auction), allowed_mentions=NO_MENTIONS
+            embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=NO_MENTIONS
         )
         message = await interaction.original_response()
         await service.set_message_id(auction.id, message.id)

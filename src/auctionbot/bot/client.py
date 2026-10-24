@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import tasks
 
 from auctionbot.bot import commands
+from auctionbot.bot.actions import reply_ephemeral
 from auctionbot.bot.refresher import MessageRefresher
 from auctionbot.bot.render import (
     auction_embed,
@@ -12,6 +13,7 @@ from auctionbot.bot.render import (
     closed_announcement,
 )
 from auctionbot.bot.scheduler import Unannounceable, tick
+from auctionbot.bot.views import BidButton, CustomBidButton, auction_view
 from auctionbot.clock import SystemClock
 from auctionbot.config import Settings
 from auctionbot.core.models import Auction, Status
@@ -45,7 +47,9 @@ class DiscordAnnouncer:
             if ref.message_id is not None:
                 message = channel.get_partial_message(ref.message_id)
                 try:
-                    await message.edit(embed=auction_embed(auction), allowed_mentions=none)
+                    await message.edit(
+                        embed=auction_embed(auction), view=auction_view(auction), allowed_mentions=none
+                    )
                     reference = message.to_reference(fail_if_not_exists=False)
                 except discord.NotFound:
                     pass  # the auction message was deleted; still announce the result
@@ -77,6 +81,7 @@ class AuctionBot(discord.Client):
 
     async def setup_hook(self) -> None:
         commands.register(self)
+        self.add_dynamic_items(BidButton, CustomBidButton)
         self.scheduler.start()
         if self.settings.dev_guild_id is None:
             log.warning("DEV_GUILD_ID is not set; slash commands were not synced")
@@ -94,7 +99,9 @@ class AuctionBot(discord.Client):
             return
         message = self.get_partial_messageable(ref.channel_id).get_partial_message(ref.message_id)
         await message.edit(
-            embed=auction_embed(auction), allowed_mentions=discord.AllowedMentions.none()
+            embed=auction_embed(auction),
+            view=auction_view(auction),
+            allowed_mentions=discord.AllowedMentions.none(),
         )
 
     async def close(self) -> None:
@@ -110,8 +117,4 @@ class AuctionBot(discord.Client):
         interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         log.error("Unhandled error in command", exc_info=error)
-        message = "Something went wrong. Please try again."
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
+        await reply_ephemeral(interaction, "Something went wrong. Please try again.")

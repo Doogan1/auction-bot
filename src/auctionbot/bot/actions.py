@@ -9,6 +9,14 @@ NO_MENTIONS = discord.AllowedMentions.none()
 NOT_FOUND_MESSAGE = "That auction doesn't exist (or it belongs to another server)."
 
 
+async def reply_ephemeral(interaction: discord.Interaction, message: str) -> None:
+    """Answer an interaction privately, whether or not it already has a response."""
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
+
+
 async def get_in_guild(service: AuctionService, auction_id: int, guild_id: int) -> Auction:
     """Load an auction, treating ones from other servers as nonexistent (ids are global)."""
     ref = await service.get_ref(auction_id)
