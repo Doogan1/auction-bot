@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import discord
@@ -67,6 +68,7 @@ class AuctionBot(discord.Client):
         self.tree.error(self._on_tree_error)
         self.refresher = MessageRefresher(self.refresh_message, SystemClock())
         self.announcer = DiscordAnnouncer(self)
+        self.simulations: dict[int, asyncio.Task] = {}  # guild id -> running /simulate task
 
     @tasks.loop(seconds=2)
     async def scheduler(self) -> None:
@@ -105,6 +107,8 @@ class AuctionBot(discord.Client):
         )
 
     async def close(self) -> None:
+        for task in list(self.simulations.values()):
+            task.cancel()
         self.scheduler.cancel()
         await self.refresher.aclose()
         await super().close()

@@ -7,6 +7,7 @@ from discord import app_commands
 
 from auctionbot.bot.actions import NO_MENTIONS, NOT_FOUND_MESSAGE, get_in_guild, perform_bid
 from auctionbot.bot.parsing import parse_amount, parse_duration
+from auctionbot.bot.simulate import start_simulation
 from auctionbot.bot.views import auction_view
 from auctionbot.bot.render import (
     auction_choice_label,
@@ -151,3 +152,11 @@ def register(bot: "AuctionBot") -> None:
             await interaction.response.send_message(str(err), ephemeral=True)
             return
         await perform_bid(interaction, auction, value)
+
+    @bot.tree.command(
+        name="simulate", description="Run a 30-second demo auction with simulated bidders (admin)"
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def simulate(interaction: discord.Interaction) -> None:
+        await start_simulation(interaction)

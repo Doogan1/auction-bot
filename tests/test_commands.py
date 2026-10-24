@@ -45,6 +45,12 @@ def test_commands_are_guild_only():
     assert tree.get_command("bid").guild_only
 
 
+def test_simulate_command_is_admin_only_and_guild_only():
+    command = make_bot().tree.get_command("simulate")
+    assert command.guild_only
+    assert command.default_permissions.administrator
+
+
 async def test_get_in_guild_rejects_auctions_from_other_guilds():
     repo = await Repository.open(":memory:")
     try:
