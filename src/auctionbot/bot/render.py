@@ -87,7 +87,7 @@ def bid_announcement(
 
 def closed_announcement(auction: Auction) -> str:
     winning = auction.winning_bid()
-    title = f"**{_safe(auction.title)}** (#{auction.id})"
+    title = f"🔨 **{_safe(auction.title)}** (#{auction.id})"
     if winning is None:
         return f"{title} has ended with no bids."
     return (

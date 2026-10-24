@@ -125,3 +125,13 @@ def test_titles_cannot_ping_in_announcement_text():
         bid_announcement(auction, 8, 15, False, 30),
     ):
         assert "@everyone" not in text
+
+
+def test_closed_announcement_opens_with_a_hammer():
+    winner = make_auction(status=Status.CLOSED, bids=(Bid(8, 15, 2.0),))
+    assert closed_announcement(winner).startswith("🔨")
+    assert closed_announcement(make_auction(status=Status.CLOSED)).startswith("🔨")
+
+
+def test_cancelled_announcement_has_no_hammer():
+    assert "🔨" not in cancelled_announcement(make_auction(status=Status.CANCELLED))
