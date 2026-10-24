@@ -23,7 +23,7 @@ def place_bid(
 
     Evaluation order, first failure wins:
       1. auction not OPEN, or now >= ends_at      -> AUCTION_CLOSED
-      2. amount <= 0 or amount > MAX_AMOUNT       -> INVALID_AMOUNT
+      2. amount not an int (bool excluded), <= 0, or > MAX_AMOUNT -> INVALID_AMOUNT
       3. bidder is the seller                     -> SELLER_CANNOT_BID
       4. bidder is the current high bidder        -> ALREADY_HIGH_BIDDER
       5. amount < minimum_next_bid                -> BELOW_MINIMUM
@@ -32,7 +32,7 @@ def place_bid(
     """
     if auction.status is not Status.OPEN or now >= auction.ends_at:
         return auction, BidRejected(RejectReason.AUCTION_CLOSED)
-    if amount <= 0 or amount > MAX_AMOUNT:
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0 or amount > MAX_AMOUNT:
         return auction, BidRejected(RejectReason.INVALID_AMOUNT)
     if bidder_id == auction.seller_id:
         return auction, BidRejected(RejectReason.SELLER_CANNOT_BID)

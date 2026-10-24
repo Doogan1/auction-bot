@@ -72,7 +72,11 @@ class RepoTx:
         return None if row is None else AuctionRef(row["guild_id"], row["channel_id"], row["message_id"])
 
     async def save(self, auction: Auction) -> None:
-        """Write the mutable auction fields and insert any bids not yet stored."""
+        """Write the mutable auction fields and insert any bids not yet stored.
+
+        Bids are append-only: new ones are inferred as `auction.bids[stored:]`, so
+        the auction must have been loaded in this same transaction.
+        """
         await self._conn.execute(
             "UPDATE auctions SET ends_at = ?, status = ?, extensions_used = ? WHERE id = ?",
             (auction.ends_at, auction.status.value, auction.extensions_used, auction.id),
@@ -172,11 +176,13 @@ class Repository:
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[RepoTx]:
         async with self._lock:
-            await self._conn.execute("BEGIN IMMEDIATE")
             try:
+                # BEGIN is inside the try: if this task is cancelled while it is queued,
+                # aiosqlite still runs it, so the rollback below must still happen.
+                await self._conn.execute("BEGIN IMMEDIATE")
                 yield RepoTx(self._conn)
             except BaseException:
-                await self._conn.rollback()
+                await asyncio.shield(self._conn.rollback())
                 raise
             else:
                 await self._conn.commit()

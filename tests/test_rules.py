@@ -64,6 +64,11 @@ def test_amount_above_max_invalid(amount):
     assert_rejected(make_auction(), ALICE, amount, 10.0, RejectReason.INVALID_AMOUNT)
 
 
+@pytest.mark.parametrize("amount", [10.5, float("nan"), True, "15"])
+def test_non_int_amount_invalid(amount):
+    assert_rejected(make_auction(), ALICE, amount, 10.0, RejectReason.INVALID_AMOUNT)
+
+
 def test_max_amount_itself_is_accepted():
     _, result = place_bid(make_auction(), ALICE, MAX_AMOUNT, 10.0)
     assert isinstance(result, BidAccepted)

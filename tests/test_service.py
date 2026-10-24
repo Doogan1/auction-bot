@@ -75,6 +75,16 @@ async def test_create_strips_title(service):
         {"duration_s": 0},
         {"duration_s": -5},
         {"config": AuctionConfig(min_increment=0)},
+        {"config": AuctionConfig(min_increment=2**70)},
+        {"config": AuctionConfig(anti_snipe_window_s=-1)},
+        {"config": AuctionConfig(extension_s=-1)},
+        {"config": AuctionConfig(max_extensions=-1)},
+        {"duration_s": 10**400},
+        {"duration_s": float("nan")},
+        {"duration_s": 10 * 365 * 86400},
+        {"seller_id": 2**70},
+        {"guild_id": 2**70},
+        {"channel_id": -(2**70)},
     ],
 )
 async def test_create_rejects_invalid_inputs(service, overrides):
@@ -101,6 +111,13 @@ async def test_huge_bid_rejected_not_crash(service):
     auction = await create(service)
     result = await service.place_bid(auction.id, ALICE, 2**70)
     assert result == BidRejected(RejectReason.INVALID_AMOUNT)
+
+
+async def test_out_of_range_bidder_id_raises_value_error(service):
+    auction = await create(service)
+    with pytest.raises(ValueError):
+        await service.place_bid(auction.id, 2**70, 10)
+    assert (await service.get(auction.id)).bids == ()
 
 
 async def test_unknown_auction_raises(service):

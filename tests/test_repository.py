@@ -116,3 +116,17 @@ async def test_transactions_do_not_interleave(repo):
     await asyncio.gather(worker("a"), worker("b"))
     assert order == ["a-start", "a-end", "b-start", "b-end"]
     assert len(await repo.list_open(GUILD)) == 2
+
+
+async def test_cancelled_tasks_do_not_poison_the_connection(repo):
+    created = await repo.create(**create_args())
+    for ticks in range(200):
+        task = asyncio.ensure_future(repo.get(created.id))
+        for _ in range(ticks % 7):
+            await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    assert await repo.get(created.id) == created

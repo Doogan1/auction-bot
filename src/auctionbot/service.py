@@ -8,6 +8,14 @@ from auctionbot.storage.repository import AuctionRef, Repository
 
 MAX_TITLE_LENGTH = 256  # Discord embed title limit
 MAX_DESCRIPTION_LENGTH = 1000
+MAX_DURATION_S = 365 * 86400
+MAX_EXTENSIONS_LIMIT = 1000
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1  # SQLite INTEGER range; negative ids are simulated bidders
+
+
+def _check_id(name: str, value: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or not _INT64_MIN <= value <= _INT64_MAX:
+        raise ValueError(f"{name} must be a 64-bit integer")
 
 
 class AuctionNotFound(Exception):
@@ -45,10 +53,19 @@ class AuctionService:
             raise ValueError(f"description must be at most {MAX_DESCRIPTION_LENGTH} characters")
         if not 1 <= starting_bid <= rules.MAX_AMOUNT:
             raise ValueError(f"starting_bid must be between 1 and {rules.MAX_AMOUNT}")
-        if duration_s <= 0:
-            raise ValueError("duration_s must be positive")
-        if config.min_increment < 1:
-            raise ValueError("min_increment must be at least 1")
+        if not 0 < duration_s <= MAX_DURATION_S:  # also rejects nan
+            raise ValueError(f"duration_s must be between 0 (exclusive) and {MAX_DURATION_S}")
+        if not 1 <= config.min_increment <= rules.MAX_AMOUNT:
+            raise ValueError(f"min_increment must be between 1 and {rules.MAX_AMOUNT}")
+        if not 0 <= config.anti_snipe_window_s <= MAX_DURATION_S:
+            raise ValueError("anti_snipe_window_s out of range")
+        if not 0 <= config.extension_s <= MAX_DURATION_S:
+            raise ValueError("extension_s out of range")
+        if not 0 <= config.max_extensions <= MAX_EXTENSIONS_LIMIT:
+            raise ValueError(f"max_extensions must be between 0 and {MAX_EXTENSIONS_LIMIT}")
+        _check_id("guild_id", guild_id)
+        _check_id("channel_id", channel_id)
+        _check_id("seller_id", seller_id)
         return await self._repo.create(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -61,6 +78,7 @@ class AuctionService:
         )
 
     async def place_bid(self, auction_id: int, bidder_id: int, amount: int) -> BidResult:
+        _check_id("bidder_id", bidder_id)
         async with self._lock_for(auction_id), self._repo.transaction() as tx:
             auction = await tx.get(auction_id)
             if auction is None:
