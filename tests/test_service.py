@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from auctionbot.clock import FakeClock
@@ -163,3 +165,81 @@ async def test_message_id_round_trips_through_ref(service):
     await service.set_message_id(auction.id, 777)
     ref = await service.get_ref(auction.id)
     assert (ref.guild_id, ref.channel_id, ref.message_id) == (GUILD, CHANNEL, 777)
+
+
+# --- concurrency and restart ------------------------------------------------
+
+
+async def test_concurrent_bids_same_instant_exactly_one_winner(service):
+    auction = await create(service)
+    bidders = range(1000, 1050)
+    results = await asyncio.gather(*(service.place_bid(auction.id, b, 10) for b in bidders))
+    assert sum(isinstance(r, BidAccepted) for r in results) == 1
+    assert results.count(BidRejected(RejectReason.BELOW_MINIMUM)) == 49
+    assert len((await service.get(auction.id)).bids) == 1
+
+
+async def test_concurrent_distinct_amounts_no_lost_updates(service):
+    auction = await create(service)
+    amounts = list(range(11, 41))
+    results = await asyncio.gather(
+        *(service.place_bid(auction.id, 1000 + a, a) for a in amounts)
+    )
+    accepted = [a for a, r in zip(amounts, results) if isinstance(r, BidAccepted)]
+    stored = await service.get(auction.id)
+    stored_amounts = [b.amount for b in stored.bids]
+    assert stored_amounts == sorted(set(stored_amounts))  # strictly increasing
+    assert sorted(stored_amounts) == sorted(accepted)  # nothing lost, nothing extra
+    assert stored.high_bid == max(accepted)
+
+
+async def test_concurrent_bids_on_different_auctions_stay_consistent(service):
+    first = await create(service, title="first")
+    second = await create(service, title="second")
+    jobs = []
+    for i in range(20):
+        jobs.append(service.place_bid(first.id, 1000 + i, 10 + 5 * i))
+        jobs.append(service.place_bid(second.id, 2000 + i, 10 + 5 * i))
+    results = await asyncio.gather(*jobs)
+    assert all(isinstance(r, BidAccepted) or isinstance(r, BidRejected) for r in results)
+    for auction_id in (first.id, second.id):
+        stored = await service.get(auction_id)
+        amounts = [b.amount for b in stored.bids]
+        assert amounts == sorted(set(amounts))
+        assert all(1000 <= b.bidder_id < 1020 or 2000 <= b.bidder_id < 2020 for b in stored.bids)
+    assert {b.bidder_id // 1000 for b in (await service.get(first.id)).bids} <= {1}
+    assert {b.bidder_id // 1000 for b in (await service.get(second.id)).bids} <= {2}
+
+
+async def test_restart_preserves_state(tmp_path, clock):
+    path = str(tmp_path / "auctions.db")
+    repo_a = await Repository.open(path)
+    service_a = AuctionService(repo_a, clock)
+    auction = await create(service_a)
+    await service_a.place_bid(auction.id, ALICE, 10)
+    before = await service_a.get(auction.id)
+    await repo_a.close()
+
+    repo_b = await Repository.open(path)
+    service_b = AuctionService(repo_b, clock)
+    assert await service_b.get(auction.id) == before
+    assert isinstance(await service_b.place_bid(auction.id, BOB, 15), BidAccepted)
+    assert await service_b.place_bid(auction.id, ALICE, 16) == BidRejected(RejectReason.BELOW_MINIMUM)
+    await repo_b.close()
+
+
+async def test_restart_close_due_closes_expired_while_offline(tmp_path, clock):
+    path = str(tmp_path / "auctions.db")
+    repo_a = await Repository.open(path)
+    auction = await create(AuctionService(repo_a, clock), duration_s=10)
+    await repo_a.close()
+
+    clock.advance(10)  # the bot was offline past the deadline
+    repo_b = await Repository.open(path)
+    service_b = AuctionService(repo_b, clock)
+    assert [a.id for a in await service_b.close_due()] == [auction.id]
+    assert await service_b.close_due() == []
+    assert [a.id for a in await service_b.list_unannounced()] == [auction.id]
+    await service_b.mark_announced(auction.id)
+    assert await service_b.list_unannounced() == []
+    await repo_b.close()
