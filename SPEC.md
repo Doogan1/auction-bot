@@ -233,11 +233,13 @@ A discrete-event runner: given an auction, a list of bidder strategies, and a se
 - Keep dependencies minimal; ask before adding any.
 - Run `pytest` before declaring a milestone done.
 
-## 12. Open decisions (resolve before or during milestone 3)
+## 12. Decisions
 
-1. **What are bids denominated in?** v1 default: honor-system numbers with no balances. Alternative: a virtual points ledger with per-user balances, which adds escrow-on-high-bid and refund-on-outbid logic to `core`.
-2. **Self-outbid.** Spec rejects a bid from the current high bidder. Alternative: allow it as a "raise max" feature, which implies proxy/max-bid auctions (a larger change).
-3. **Anti-snipe policy.** Spec: extend to `now + extension_s` when a bid lands inside the window. Alternatives: fixed cap on total extensions, or a hard maximum end time.
-4. **Who can start auctions?** Anyone, a specific role, or admins only.
-5. **Item content.** Title only, or description/image attachments, which affects the embed and the schema.
-6. **One active auction per channel, or many?** The spec assumes many; it affects autocomplete and message layout.
+Resolved on 2026-10-23 (see `docs/superpowers/plans/2026-10-23-engine-milestones-1-3.md`).
+
+1. **Bid denomination:** honor-system integers, no balances. Virtual points ledger with escrow is a possible v2.
+2. **Self-outbid:** rejected (`ALREADY_HIGH_BIDDER`). Proxy/max-bid auctions are out of scope.
+3. **Anti-snipe policy:** extend to `now + extension_s`, capped at `AuctionConfig.max_extensions` (default 10) extensions. Once capped, bids are still accepted but the deadline stays put.
+4. **Who can start auctions:** anyone. `/simulate` and cancelling others' auctions stay admin-only.
+5. **Item content:** title plus an optional description. No images in v1.
+6. **Auctions per channel:** many.
