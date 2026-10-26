@@ -1,0 +1,61 @@
+import logging
+
+import discord
+
+from auctionbot.bot.render import bid_announcement, reject_message
+from auctionbot.core.models import Auction
+from auctionbot.core.results import BidRejected
+from auctionbot.service import AuctionNotFound, AuctionService
+
+log = logging.getLogger(__name__)
+
+NO_MENTIONS = discord.AllowedMentions.none()
+NOT_FOUND_MESSAGE = "That auction doesn't exist (or it belongs to another server)."
+
+
+async def reply_ephemeral(interaction: discord.Interaction, message: str) -> None:
+    """Answer an interaction privately, whether or not it already has a response."""
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
+
+
+async def get_in_guild(service: AuctionService, auction_id: int, guild_id: int) -> Auction:
+    """Load an auction, treating ones from other servers as nonexistent (ids are global)."""
+    ref = await service.get_ref(auction_id)
+    if ref.guild_id != guild_id:
+        raise AuctionNotFound(auction_id)
+    return await service.get(auction_id)
+
+
+async def perform_bid(interaction: discord.Interaction, auction_id: int, amount: int) -> None:
+    """Place a bid for the interacting user: ephemeral on rejection, public on success."""
+    bot = interaction.client  # an AuctionBot; typed loosely to avoid an import cycle
+    try:
+        await get_in_guild(bot.service, auction_id, interaction.guild_id)
+        result = await bot.service.place_bid(auction_id, interaction.user.id, amount)
+        auction = await bot.service.get(auction_id)
+    except AuctionNotFound:
+        await interaction.response.send_message(NOT_FOUND_MESSAGE, ephemeral=True)
+        return
+    if isinstance(result, BidRejected):
+        await interaction.response.send_message(
+            reject_message(result.reason, auction), ephemeral=True
+        )
+        return
+    await interaction.response.send_message(
+        bid_announcement(
+            auction, interaction.user.id, amount, result.extended, auction.config.anti_snipe_window_s
+        ),
+        allowed_mentions=NO_MENTIONS,
+    )
+    bot.refresher.request(auction_id)
+
+
+async def discard_auction(service: AuctionService, auction: Auction) -> None:
+    """Cancel an auction whose Discord message could not be posted, so it is not left live."""
+    try:
+        await service.cancel(auction.id, auction.seller_id, False)
+    except Exception:
+        log.exception("Could not cancel orphaned auction %d", auction.id)
